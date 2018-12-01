@@ -12,14 +12,12 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 	}
 }
 
-#define TILE_WIDTH              32
-#define NUM_THREADS_PER_BLOCK 	256
-#define NUM_BLOCKS 				16
-#define TOL						1e-6
+#define THREADS 	256
 
 // Knapsack parameters 
 #define N   100 
 #define W   500000
+
 
 void CudaTimerStart(cudaEvent_t* startGPU, cudaEvent_t* stopGPU) {
 	// Create the cuda events
@@ -65,10 +63,7 @@ void initializeWeights(int *arr, int seed) {
 void hostKnapsack(int *w, float* v, float *m, int *chosen) {
     int i, j;
     float with = 0, without = 0;
-    for(j = 0; j < W; j++) {
-        m[j] = 0.0;
-        chosen[j] = 0.0;
-    }
+
     for (i = 1; i < N; i++) {
         for (j = 1; j < W; j++) {
             if(j < w[i-1]) {
@@ -88,6 +83,41 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
                 }
             }
         }
+    }
+}
+
+__global__ void GPU_knap(
+    const int i,
+    const int curv,
+    const int curw,
+    const int*__restrict__ DP_old,
+    int* __restrict__ DP_new,
+    int* __restrict__ Path,
+    const int capacity) {
+
+    const int offset = threadIdx.x+blockIdx.x*blockDim.x;
+    const int which_warp = threadIdx.x>>5;
+    const int tid_in_warp = threadIdx.x%32;
+
+    __shared__ int s_cache[9][33];//do not really need to use __shared__ memory for this but did it anyway
+    __shared__ int s_or[9][33];//ditto
+
+    if(offset >= capacity) {
+        return;
+    }
+
+    const int v1 = (offset >= curw) ? (DP_old[(offset-curw)] + curv) : -1;
+    const int v0 = DP_old[offset];
+
+    s_cache[which_warp][tid_in_warp] = (v1>=0 && v1>v0) ? v1 : v0;
+    s_or[which_warp][tid_in_warp] = (v1>=0 && v1>v0) ? 1 : 0;
+    __syncthreads();
+
+    atomicExch(&DP_new[offset],s_cache[which_warp][tid_in_warp]);
+    __syncthreads();
+
+    if(s_or[which_warp][tid_in_warp] > 0) {
+        atomicOr(&Path[offset],1);
     }
 }
 
@@ -129,13 +159,27 @@ int main(int argc, char **argv) {
 
     CudaTimerStart(&startGPU, &stopGPU);
 
-	dim3 dimBlock(TILE_WIDTH,TILE_WIDTH,1);
-    dim3 dimGrid((N/TILE_WIDTH)+1, (N/TILE_WIDTH)+1, 1);
-    //matrixMultiplyShared<<<dimGrid, dimBlock>>>(device_A, device_B, device_res, arrLen);
+	dim3 dimGrid(((W+THREADS-1)/THREADS),1,1);
+    dim3 dimBlock((THREADS, 1, 1);
+
+    for(; ii<N; ii++) {
+        GPU_knap<<<dimGrid,dimBlock>>>(
+            ii,
+            device_values[ii-1],
+            device_weights[ii-1],
+            (int*)(&d_DP[(ii-1)*W]),
+            (int*)(&d_DP[ii*W]),
+            (int*)(&d_Path[ii*W]),
+            W);       
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    }
 
 	// Check for errors during launch
     CUDA_SAFE_CALL(cudaPeekAtLastError());
-    
+    float *device_result = malloc(N*W*sizeof(float));
+    CUDA_SAFE_CALL(cudaMemcpy(device_result, device_DP, N*W*sizeof(float)));
+    printf("GPU Result %f\n", device_result[(N*W) + W - 1]);    
+
     // Transfer the results back to the host
     //CUDA_SAFE_CALL(cudaMemcpy(host_deviceResCopy, device_res, allocSize2D, cudaMemcpyDeviceToHost));
     CudaTimerStop(&startGPU, &stopGPU);
@@ -151,7 +195,7 @@ int main(int argc, char **argv) {
     printf("Time to generate:  %3.1f ms \n", total_cpu_time);
 
 
-    printf("Result %f", host_DP[(N*W) - 1]);
+    printf("Result %f\n", host_DP[(N*W) + W - 1]);
 
 	// Free-up device and host memory
     CUDA_SAFE_CALL(cudaFree(device_weights));
