@@ -17,7 +17,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 // Knapsack parameters
 #define N   100
 #define W   500000
-
+#define E   4
 
 void CudaTimerStart(cudaEvent_t* startGPU, cudaEvent_t* stopGPU) {
 	// Create the cuda events
@@ -57,6 +57,22 @@ void initializeWeights(int *arr, int seed) {
 	srand(seed);
 	for (i = 0; i < N; i++) {        
         arr[i] = (int) (rand()%20000);;
+	}
+}
+
+void initializeValuesApprox(float *arr, int seed) {
+	int i;
+	srand(seed);
+	for (i = 0; i < N; i++) {
+        arr[i] = round(((float) (rand()%1000))/E) + 1;
+	}
+}
+
+void initializeWeightsApprox(int *arr, int seed) {
+	int i;	
+	srand(seed);
+	for (i = 0; i < N; i++) {        
+        arr[i] = (int)(round(((float) (rand()%1000))/E) + 1);
 	}
 }
 
@@ -199,6 +215,17 @@ int main(int argc, char **argv) {
     printf("CPU Time: %3.1f ms\n", total_cpu_time);
     printf("CPU Result %f\n", host_DP[N*(W-5)]);
     printf("GPU Result %f\n", gpu_result);
+
+    initializeValuesApprox(host_values, SEED);
+    initializeWeightsApprox(host_weights, SEED);
+    initializeZerosFirstRow(host_DP);
+    hostKnapsack(host_weights, host_values, host_DP, host_chosen);
+    gettimeofday(&t2, 0);
+    total_cpu_time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
+    printf("Time to generate:  %3.1f ms \n", total_cpu_time);
+    printf("Result %f\n", host_DP[N*(W-5)]);
+
+
 	// Free-up device and host memory
     CUDA_SAFE_CALL(cudaFree(device_weights));
     CUDA_SAFE_CALL(cudaFree(device_values));
