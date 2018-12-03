@@ -35,7 +35,7 @@ void CudaTimerStop(cudaEvent_t* startGPU, cudaEvent_t *stopGPU) {
 	cudaEventElapsedTime(&elapsed_gpu, *startGPU, *stopGPU);
 	cudaEventDestroy(*startGPU);
     cudaEventDestroy(*stopGPU);
-    printf("\nGPU time: %f (msec)\n", elapsed_gpu);
+    printf("\nGPU time: %3.1f ms\n", elapsed_gpu);
 }
 
 void initializeZerosFirstRow(float *arr) {
@@ -87,7 +87,7 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
 }
 
 
-__global__ void kernel_knapsack(    
+__global__ void kernel_knapsack(
     const int current_val,
     const int current_weight,
     float *__restrict__ DP_row_above,
@@ -99,11 +99,11 @@ __global__ void kernel_knapsack(
     if (offset >= capacity)
         return;
 
-    const float v1 = (offset >= current_weight) ? (DP_row_above[(offset - current_weight)] + current_val) : -1;
+    const float candidate = (offset >= current_weight) ? (DP_row_above[(offset - current_weight)] + current_val) : -1;
     const float v0 = DP_row_above[offset];
 
-    float max_val = (v1 >= 0 && v1 > v0) ? v1 : v0;
-    int chosen = (v1 >= 0 && v1 > v0) ? 1 : 0;
+    float max_val = (candidate >= 0 && candidate > v0) ? candidate : v0;
+    int chosen = (candidate >= 0 && candidate > v0) ? 1 : 0;
 
     DP_curr_row[offset] = max_val;
     Path[offset] = chosen;
@@ -182,13 +182,10 @@ int main(int argc, char **argv) {
 	// Check for errors during launch
     CUDA_SAFE_CALL(cudaPeekAtLastError());
 
-    printf("GPU Result w/ gpu_result %f\n", gpu_result);  // Segfault here...   
-
     fflush(stdout);
     CudaTimerStop(&startGPU, &stopGPU);
     // Transfer the results back to the host
     //CUDA_SAFE_CALL(cudaMemcpy(host_deviceResCopy, device_res, allocSize2D, cudaMemcpyDeviceToHost));
-    
 
     // **************** CPU BASELINE **************************************
     // Calculate time
@@ -199,9 +196,7 @@ int main(int argc, char **argv) {
     gettimeofday(&t2, 0);
     double total_cpu_time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
     
-
-
-    printf("CPU Time:  %3.1f ms \n", total_cpu_time);
+    printf("CPU Time: %3.1f ms\n", total_cpu_time);
     printf("CPU Result %f\n", host_DP[N*(W-5)]);
     printf("GPU Result %f\n", gpu_result);
 	// Free-up device and host memory
