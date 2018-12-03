@@ -87,12 +87,11 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
 }
 
 // TODO
-__global__ void Knapsack_Kernel(
-    const int i,
+__global__ void Knapsack_Kernel(    
     const int current_val,
     const int current_weight,
-    float *__restrict__ DP_old,
-    float *__restrict__ DP_new,
+    float *__restrict__ DP_row_above,
+    float *__restrict__ DP_curr_row,
     int *__restrict__ Path,
     const int capacity) {
     const int offset = threadIdx.x + blockIdx.x * blockDim.x;
@@ -100,13 +99,13 @@ __global__ void Knapsack_Kernel(
     if (offset >= capacity)
         return;
 
-    const float v1 = (offset >= current_weight) ? (DP_old[(offset - current_weight)] + current_val) : -1;
-    const float v0 = DP_old[offset];
-
+    const float v1 = (offset >= current_weight) ? (DP_row_above[(offset - current_weight)] + current_val) : -1;
+    const float v0 = DP_row_above[offset];
+    
     float max_val = (v1 >= 0 && v1 > v0) ? v1 : v0;
     int chosen = (v1 >= 0 && v1 > v0) ? 1 : 0;
 
-    atomicExch(&DP_new[offset], max_val);
+    atomicExch(&DP_curr_row[offset], max_val);
     atomicOr(&Path[offset], chosen);
 }
 
@@ -157,10 +156,14 @@ int main(int argc, char **argv) {
 	dim3 dimGrid((((W+1)+THREADS-1)/THREADS),1,1);
     dim3 dimBlock(THREADS, 1, 1);
 
-    for(int i = 1; i<N; i++) {        
+    for(int i = 1; i<N; i++) {
         Knapsack_Kernel<<<dimGrid,dimBlock>>>(
-            i, host_values[i - 1], host_weights[i - 1], (float *)(&device_DP[(i - 1) * W]),
-            (float *)(&device_DP[i * W]), (int *)(&device_chosen[i * W]), W);
+            host_values[i - 1],
+            host_weights[i - 1],
+            (float *)(&device_DP[(i - 1) * W]),
+            (float *)(&device_DP[i * W]),
+            (int *)(&device_chosen[i * W]),
+            W);
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
     }
     printf("GPU DONE\n");
