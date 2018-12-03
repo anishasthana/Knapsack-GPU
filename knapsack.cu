@@ -87,7 +87,7 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
 }
 
 
-__global__ void Knapsack_Kernel(    
+__global__ void kernel_knapsack(    
     const int current_val,
     const int current_weight,
     float *__restrict__ DP_row_above,
@@ -109,6 +109,11 @@ __global__ void Knapsack_Kernel(
     Path[offset] = chosen;
 }
 
+__global__ void kernel_get_result(const int idx, float* DP, float* res) {
+    *res = DP[idx];
+}
+
+
 int main(int argc, char **argv) {
     // Select device
     CUDA_SAFE_CALL(cudaSetDevice(0));
@@ -121,7 +126,7 @@ int main(int argc, char **argv) {
     int values_arr_size = N*sizeof(float);
 
     // Arrays on GPU global memory
-    float *device_values, *device_DP;
+    float *device_values, *device_DP, *device_result;
 	int *device_weights, *device_chosen;
     CUDA_SAFE_CALL(cudaMalloc((void **)&device_weights, values_arr_size));
 	CUDA_SAFE_CALL(cudaMalloc((void **)&device_values, values_arr_size));
@@ -144,12 +149,14 @@ int main(int argc, char **argv) {
     CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_chosen, dp_arr_size, cudaHostAllocDefault));
     CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_values, values_arr_size, cudaHostAllocDefault));
     CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_weights, values_arr_size, cudaHostAllocDefault));
+    CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_result, sizeof(float), cudaHostAllocDefault));
 
     // Transfer the 2d-arrays to the GPU memory
 	CUDA_SAFE_CALL(cudaMemcpy(device_values, host_values, N*sizeof(float), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(device_weights, host_weights, N*sizeof(int), cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL(cudaMemset(device_DP, 0.0, dp_arr_size));
     CUDA_SAFE_CALL(cudaMemset(device_chosen, 0.0, dp_arr_size));
+    CUDA_SAFE_CALL(cudaMemset(device_result, 0.0, sizeof(float)));
    
     CudaTimerStart(&startGPU, &stopGPU);
 
@@ -157,27 +164,26 @@ int main(int argc, char **argv) {
     dim3 dimBlock(THREADS, 1, 1);
 
     for(int i = 1; i<N; i++) {
-        Knapsack_Kernel<<<dimGrid,dimBlock>>>(
+        kernel_knapsack<<<dimGrid,dimBlock>>>(
             host_values[i - 1],
             host_weights[i - 1],
             (float *)(&device_DP[(i - 1) * W]),
             (float *)(&device_DP[i * W]),
             (int *)(&device_chosen[i * W]),
             W);
-        CUDA_SAFE_CALL(cudaDeviceSynchronize());
+            CUDA_SAFE_CALL(cudaDeviceSynchronize());
     }
-    printf("GPU DONE\n");
-    fflush(stdout);
+    CUDA_SAFE_CALL(cudaDeviceSynchronize());
+    CUDA_SAFE_CALL(cudaPeekAtLastError());
+
+    float *gpu_result = (float*)malloc(sizeof(float));
+    CUDA_SAFE_CALL(cudaMemcpy(gpu_result, device_DP + (N * W - 1), sizeof(float), cudaMemcpyDeviceToHost));
     
 	// Check for errors during launch
     CUDA_SAFE_CALL(cudaPeekAtLastError());
-    float *device_result = (float*)malloc(dp_arr_size);
-    printf("device_result malloc'd\n");
-    fflush(stdout);
-    CUDA_SAFE_CALL(cudaMemcpy(device_result, device_DP, dp_arr_size, cudaMemcpyDeviceToHost));
-    printf("device_result cuda memcopy done\n");
-    fflush(stdout);
-    printf("GPU Result %f\n", device_result[N*W - 1]);  // Segfault here...   
+
+    printf("GPU Result w/ gpu_result %f\n", gpu_result);  // Segfault here...   
+
     fflush(stdout);
     CudaTimerStop(&startGPU, &stopGPU);
     // Transfer the results back to the host
@@ -192,11 +198,12 @@ int main(int argc, char **argv) {
     hostKnapsack(host_weights, host_values, host_DP, host_chosen);
     gettimeofday(&t2, 0);
     double total_cpu_time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
-    printf("Time to generate:  %3.1f ms \n", total_cpu_time);
+    
 
 
-    printf("Result %f\n", host_DP[N*(W-5)]);
-
+    printf("CPU Time:  %3.1f ms \n", total_cpu_time);
+    printf("CPU Result %f\n", host_DP[N*(W-5)]);
+    printf("GPU Result %f\n", gpu_result);
 	// Free-up device and host memory
     CUDA_SAFE_CALL(cudaFree(device_weights));
     CUDA_SAFE_CALL(cudaFree(device_values));
