@@ -86,7 +86,7 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
     }
 }
 
-// TODO
+
 __global__ void Knapsack_Kernel(    
     const int current_val,
     const int current_weight,
@@ -101,12 +101,12 @@ __global__ void Knapsack_Kernel(
 
     const float v1 = (offset >= current_weight) ? (DP_row_above[(offset - current_weight)] + current_val) : -1;
     const float v0 = DP_row_above[offset];
-    
+
     float max_val = (v1 >= 0 && v1 > v0) ? v1 : v0;
     int chosen = (v1 >= 0 && v1 > v0) ? 1 : 0;
 
-    atomicExch(&DP_curr_row[offset], max_val);
-    atomicOr(&Path[offset], chosen);
+    DP_curr_row[offset] = max_val;
+    Path[offset] = chosen;
 }
 
 int main(int argc, char **argv) {
