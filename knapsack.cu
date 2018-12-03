@@ -14,8 +14,8 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 
 #define THREADS 	256
 
-// Knapsack parameters 
-#define N   100 
+// Knapsack parameters
+#define N   100
 #define W   500000
 
 
@@ -86,39 +86,28 @@ void hostKnapsack(int *w, float* v, float *m, int *chosen) {
     }
 }
 
-__global__ void GPU_knap(
+// TODO
+__global__ void Knapsack_Kernel(
     const int i,
-    const int curv,
-    const int curw,
-    const int*__restrict__ DP_old,
-    int* __restrict__ DP_new,
-    int* __restrict__ Path,
+    const int current_val,
+    const int current_weight,
+    float *__restrict__ DP_old,
+    float *__restrict__ DP_new,
+    int *__restrict__ Path,
     const int capacity) {
+    const int offset = threadIdx.x + blockIdx.x * blockDim.x;
 
-    const int offset = threadIdx.x+blockIdx.x*blockDim.x;
-    const int which_warp = threadIdx.x>>5;
-    const int tid_in_warp = threadIdx.x%32;
-
-    __shared__ int s_cache[9][33];//do not really need to use __shared__ memory for this but did it anyway
-    __shared__ int s_or[9][33];//ditto
-
-    if(offset >= capacity) {
+    if (offset >= capacity)
         return;
-    }
 
-    const int v1 = (offset >= curw) ? (DP_old[(offset-curw)] + curv) : -1;
-    const int v0 = DP_old[offset];
+    const float v1 = (offset >= current_weight) ? (DP_old[(offset - current_weight)] + current_val) : -1;
+    const float v0 = DP_old[offset];
 
-    s_cache[which_warp][tid_in_warp] = (v1>=0 && v1>v0) ? v1 : v0;
-    s_or[which_warp][tid_in_warp] = (v1>=0 && v1>v0) ? 1 : 0;
-    __syncthreads();
+    float max_val = (v1 >= 0 && v1 > v0) ? v1 : v0;
+    int chosen = (v1 >= 0 && v1 > v0) ? 1 : 0;
 
-    atomicExch(&DP_new[offset],s_cache[which_warp][tid_in_warp]);
-    __syncthreads();
-
-    if(s_or[which_warp][tid_in_warp] > 0) {
-        atomicOr(&Path[offset],1);
-    }
+    atomicExch(&DP_new[offset], max_val);
+    atomicOr(&Path[offset], chosen);
 }
 
 int main(int argc, char **argv) {
@@ -127,7 +116,7 @@ int main(int argc, char **argv) {
 
     // GPU Timing variables
     cudaEvent_t startGPU, stopGPU;
-
+    // + 1 for 0th rows 
     int dp_arr_size = N*W*sizeof(float);
     int chosen_arr_size = N*W*sizeof(int);
     int values_arr_size = N*sizeof(float);
@@ -152,37 +141,45 @@ int main(int argc, char **argv) {
     initializeValues(host_values, 1251);
     initializeWeights(host_weights, 1251);
     initializeZerosFirstRow(host_DP); // Marks the entire first row as zeros
-    
+    CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_DP, dp_arr_size, cudaHostAllocDefault));
+    CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_chosen, dp_arr_size, cudaHostAllocDefault));
+    CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_values, values_arr_size, cudaHostAllocDefault));
+    CUDA_SAFE_CALL(cudaHostAlloc((void **)&device_weights, values_arr_size, cudaHostAllocDefault));
+
     // Transfer the 2d-arrays to the GPU memory
 	CUDA_SAFE_CALL(cudaMemcpy(device_values, host_values, N*sizeof(float), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(device_weights, host_weights, N*sizeof(int), cudaMemcpyHostToDevice));
-
+    CUDA_SAFE_CALL(cudaMemset(device_DP, 0.0, dp_arr_size));
+    CUDA_SAFE_CALL(cudaMemset(device_chosen, 0.0, dp_arr_size));
+   
     CudaTimerStart(&startGPU, &stopGPU);
 
-	dim3 dimGrid(((W+THREADS-1)/THREADS),1,1);
-    dim3 dimBlock((THREADS, 1, 1);
+	dim3 dimGrid((((W+1)+THREADS-1)/THREADS),1,1);
+    dim3 dimBlock(THREADS, 1, 1);
 
-    for(; ii<N; ii++) {
-        GPU_knap<<<dimGrid,dimBlock>>>(
-            ii,
-            device_values[ii-1],
-            device_weights[ii-1],
-            (int*)(&d_DP[(ii-1)*W]),
-            (int*)(&d_DP[ii*W]),
-            (int*)(&d_Path[ii*W]),
-            W);       
+    for(int i = 1; i<N; i++) {        
+        Knapsack_Kernel<<<dimGrid,dimBlock>>>(
+            i, host_values[i - 1], host_weights[i - 1], (float *)(&device_DP[(i - 1) * W]),
+            (float *)(&device_DP[i * W]), (int *)(&device_chosen[i * W]), W);
         CUDA_SAFE_CALL(cudaDeviceSynchronize());
     }
-
+    printf("GPU DONE\n");
+    fflush(stdout);
+    
 	// Check for errors during launch
     CUDA_SAFE_CALL(cudaPeekAtLastError());
-    float *device_result = malloc(N*W*sizeof(float));
-    CUDA_SAFE_CALL(cudaMemcpy(device_result, device_DP, N*W*sizeof(float)));
-    printf("GPU Result %f\n", device_result[(N*W) + W - 1]);    
-
+    float *device_result = (float*)malloc(dp_arr_size);
+    printf("device_result malloc'd\n");
+    fflush(stdout);
+    CUDA_SAFE_CALL(cudaMemcpy(device_result, device_DP, dp_arr_size, cudaMemcpyDeviceToHost));
+    printf("device_result cuda memcopy done\n");
+    fflush(stdout);
+    printf("GPU Result %f\n", device_result[N*W - 1]);  // Segfault here...   
+    fflush(stdout);
+    CudaTimerStop(&startGPU, &stopGPU);
     // Transfer the results back to the host
     //CUDA_SAFE_CALL(cudaMemcpy(host_deviceResCopy, device_res, allocSize2D, cudaMemcpyDeviceToHost));
-    CudaTimerStop(&startGPU, &stopGPU);
+    
 
     // **************** CPU BASELINE **************************************
     // Calculate time
@@ -195,7 +192,7 @@ int main(int argc, char **argv) {
     printf("Time to generate:  %3.1f ms \n", total_cpu_time);
 
 
-    printf("Result %f\n", host_DP[(N*W) + W - 1]);
+    printf("Result %f\n", host_DP[N*(W-5)]);
 
 	// Free-up device and host memory
     CUDA_SAFE_CALL(cudaFree(device_weights));
