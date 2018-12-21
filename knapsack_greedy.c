@@ -68,12 +68,9 @@ void hostKnapsack(item* items, int sum, int worth) {
     int i;
 
     for (i = N-1; i >= 0; i--) {
-        if (sum < W){
+        if (sum+items[i].weight < W){
             sum += items[i].weight;
             worth += items[i].value;
-        }
-        else{
-            break;
         }
     }
 }
