@@ -82,6 +82,7 @@ int main(int argc, char **argv) {
     int dp_arr_size = N*W*sizeof(float);
     int chosen_arr_size = N*W*sizeof(int);
     int values_arr_size = N*sizeof(float);
+    int items_arr_size = N*sizeof(item);
     int sum = 0;
     int worth = 0;
     
@@ -94,7 +95,7 @@ int main(int argc, char **argv) {
     host_values = (float *) malloc(values_arr_size);
     host_DP = (float *)malloc(dp_arr_size);
     host_ratio = (float *)malloc(values_arr_size);
-    host_items = (item *)malloc(values_arr_size);
+    host_items = (item *)malloc(100000);
     
     // Initialize the arrays on CPU
     initializeValues(host_values, 1251);
@@ -102,7 +103,6 @@ int main(int argc, char **argv) {
     initializeZerosFirstRow(host_DP); // Marks the entire first row as zeros
     initializeRatios(host_ratio,host_values,host_weights);
     initializeStruct(host_ratio,host_values,host_weights,host_items);
-    //qsort(host_items, values_arr_size, sizeof(host_items[0]), comparator);
 
     // Transfer the results back to the host
     //CUDA_SAFE_CALL(cudaMemcpy(host_deviceResCopy, device_res, allocSize2D, cudaMemcpyDeviceToHost));
@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
     struct timeval t1, t2;
     gettimeofday(&t1, 0);
     // Compute on CPU
+    qsort(host_items, items_arr_size, sizeof(host_items[0]), comparator);
     hostKnapsack(host_items, sum, worth);
     gettimeofday(&t2, 0);
     double total_cpu_time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
